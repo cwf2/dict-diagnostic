@@ -1,0 +1,4 @@
+[core]
+	editor = vi
+[color]
+	ui = always

@@ -1,0 +1,7 @@
+shell -${SHELL}
+caption always '%{= kG}%-Lw%{= kW}%50> %n%f* %t%{= kG}%+Lw%< %{= kG}%-=%c:%s%{-}'
+defscrollback 1024
+startup_message off
+hardstatus on
+hardstatus alwayslastline
+
