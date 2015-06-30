@@ -6,6 +6,7 @@ apt-get install -y \
    git \
    screen \
    vim \
+   wget \
    htop \
    nginx \
    fcgiwrap \
@@ -21,3 +22,8 @@ sudo pip install gensim
 cp /vagrant/setup/gitconfig /home/vagrant/.gitconfig
 cp /vagrant/setup/vimrc /home/vagrant/.vimrc
 cp /vagrant/setup/screenrc /home/vagrant/.screenrc
+
+wget -q -O /vagrant/data/grc.lexicon.xml \
+    http://tesserae.caset.buffalo.edu/data/common/grc.lexicon.xml
+wget -q -O /vagrant/data/la.lexicon.xml \
+    http://tesserae.caset.buffalo.edu/data/common/la.lexicon.xml 
