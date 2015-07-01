@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Return the top similarity hits for query headwords
 
@@ -10,7 +10,7 @@ Requires package 'gensim'.
 See README.txt for workflow details.
 """
 
-import pickle
+import json
 import os
 import sys
 import codecs
@@ -18,8 +18,8 @@ import unicodedata
 import argparse
 import re
 import numpy as np
+from progressbar import ProgressBar
 
-from TessPy import progressbar
 from TessPy import tesslang
 
 from gensim import corpora, models, similarities
@@ -55,12 +55,12 @@ def load_ranks(lems, quiet):
 def export_results(file, results, export_scores, quiet):
     '''write results to the output file'''
     
-    file_output = codecs.open(file, 'w', encoding='utf_8')
+    file_output = open(file, 'w', encoding="utf_8")
     
-    pr = progressbar.ProgressBar(len(results), quiet)
+    pr = ProgressBar(maxval = len(results))
     
     for rec in results:
-        pr.advance()
+        pr.update(pr.currval + 1)
         
         q, sims = rec
         row = [q]
@@ -74,16 +74,17 @@ def export_results(file, results, export_scores, quiet):
             row.append(r)
         
         if file is not None:
-            file.write(u','.join(row) + '\n')
+            file.write(','.join(row) + '\n')
         else:
-            print u','.join(row)
+            print(','.join(row))
+    
+    pr.finish()
 
 
 def parse_stop_list(lang, name, quiet):
     '''read frequency table'''
     
     # open stoplist file
-    
     filename = None
     
     if name == '*':
@@ -92,29 +93,29 @@ def parse_stop_list(lang, name, quiet):
         filename = os.path.join(basedir, "data", name + '.freq_stop_stem')
   
     if not quiet:
-        print 'Reading stoplist {0}'.format(filename)
+        print('Reading stoplist {0}'.format(filename))
   
-    pr = progressbar.ProgressBar(os.stat(filename).st_size, quiet)
+    pr = ProgressBar(maxval = os.stat(filename).st_size)
   
     try:
-        f = codecs.open(filename, encoding='utf_8')
+        f = open(filename, "r", encoding="utf_8")
     except IOError as err:
-        print "Can't read {0}: {1}".format(filename, str(err))
+        print("Can't read {0}: {1}".format(filename, str(err)))
         sys.exit(1)
     
     # read stoplist header to get total token count
     
     head = f.readline()
     
-    m = re.compile('#\s+count:\s+(\d+)', re.U).match(head)
+    m = re.compile('#\s+count:\s+(\d+)').match(head)
     
     if m is None:
-        print "Can't find header in {0}".format(filename)
+        print("Can't find header in {0}".format(filename))
         sys.exit(1)
       
     total = int(m.group(1))
     
-    pr.advance(len(head.encode('utf-8')))
+    pr.update(len(head.encode('utf_8')))
     
     # read the individual token counts, divide by total
     
@@ -128,7 +129,7 @@ def parse_stop_list(lang, name, quiet):
         
         score[lemma] = np.log(n+1)
         
-        pr.advance(len(line.encode('utf-8')))
+        pr.update(pr.currval + len(line.encode('utf_8')))
     
     f.close()
     return score
@@ -140,15 +141,15 @@ def load_dict(filename, quiet):
     file_dict = os.path.join(tempdir, filename)
     
     if not quiet:
-        print 'Reading ' + file_dict
+        print('Reading ' + file_dict)
     
-    f = open(file_dict, 'r')
+    f = open(file_dict, "r", encoding="utf_8")
     
-    dict_ = pickle.load(f)
+    data = json.load(f)
     
     f.close()
     
-    return(dict_)
+    return(data)
 
 
 def is_greek(form):
@@ -219,18 +220,18 @@ def main():
     
     # the index by word
     
-    by_word = load_dict('lookup_word.pickle', opt.quiet)
+    by_word = load_dict('lookup_word.json', opt.quiet)
     
     # the index by id
     
-    by_id = np.array(load_dict('lookup_id.pickle', opt.quiet))
+    by_id = np.array(load_dict('lookup_id.json', opt.quiet))
     
     # the corpus
     
-    file_corpus = os.path.join(tempdir, 'defs_bow.pickle')
+    file_corpus = os.path.join(tempdir, 'defs_bow.json')
     
     if not opt.quiet:
-        print 'Loading corpus ' + file_corpus
+        print('Loading corpus ' + file_corpus)
     
     corpus = load_dict(file_corpus, opt.quiet)
     
@@ -268,26 +269,26 @@ def main():
     # create dictionary
     
     if not opt.quiet:
-        print 'Creating dictionary'
+        print('Creating dictionary')
     
     dictionary = corpora.Dictionary(corpus)
     
     # convert each sample to a bag of words
     
     if not opt.quiet:
-        print 'Converting each doc to bag-of-words'
+        print('Converting each doc to bag-of-words')
     
     corpus = [dictionary.doc2bow(doc) for doc in corpus]
     
     # calculate tf-idf scores
     
     if not opt.quiet:
-        print 'Creating tf-idf model'
+        print('Creating tf-idf model')
     
     tfidf = models.TfidfModel(corpus)
     
     if not opt.quiet:
-        print 'Transforming the corpus to tf-idf'
+        print('Transforming the corpus to tf-idf')
     
     corpus_tfidf = tfidf[corpus]
         
@@ -297,7 +298,7 @@ def main():
     
     if opt.topics > 0:
         if not opt.quiet:
-            print 'Performing LSI with {0} topics'.format(opt.topics)
+            print('Performing LSI with {0} topics'.format(opt.topics))
     
         lsi = models.LsiModel(corpus_tfidf, id2word=dictionary, num_topics=opt.topics)
         
@@ -306,7 +307,7 @@ def main():
     # calculate similarities
     
     if not opt.quiet:
-        print 'Calculating similarities (please be patient)'
+        print('Calculating similarities (please be patient)')
         
     dir_calc = os.path.join(tempdir, 'sims')
     
@@ -317,10 +318,10 @@ def main():
     rank = load_ranks(by_id, opt.quiet)
     
     # determine translation candidates, write output
-    file_out = open(opt.output, "w")
+    file_out = open(opt.output, "w", encoding="utf_8")
     
     if not opt.quiet:
-        print 'Writing translation candidates to {}'.format(opt.output)
+        print('Writing translation candidates to {}'.format(opt.output))
     
     # optional filter by language
     filter = np.array([r is not None for r in rank])
@@ -330,12 +331,12 @@ def main():
         filter = filter & np.array([is_greek(lem) for lem in by_id])
     
     # take each headword in turn as a query    
-    pr = progressbar.ProgressBar(len(by_word), opt.quiet)
+    pr = ProgressBar(maxval = len(by_word))
     
     results = []
       
     for q_id, sims in enumerate(index):
-        pr.advance()
+        pr.update(pr.currval + 1)
         q = by_id[q_id]
         
         if opt.query == "greek" and not is_greek(q):
@@ -363,12 +364,14 @@ def main():
     
         # add result words and sort by score
         sims = zip(by_id[np.arange(len(by_id))][filter], sims)
-        sims.sort(key=lambda res: res[1], reverse=True)
+        sims = sorted(sims, key=lambda res: res[1], reverse=True)
     
         results = ["{0}:{1}".format(res, sim) for res, sim in sims[:opt.results]]
-        file_out.write("{0},".format(q.encode("utf-8")))
+        file_out.write("{0},".format(q))
         file_out.write(",".join(results))
         file_out.write("\n")
+    
+    pr.finish()
 
     file_out.close()
 

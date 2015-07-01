@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Parse the big XML dictionaries from Perseus 
 
@@ -14,12 +14,12 @@ import os
 import os.path
 import shutil
 import codecs
-import pickle
+import json
 import argparse
 import unicodedata
+from progressbar import ProgressBar
 
 from TessPy.tesserae import fs, url
-from TessPy import progressbar
 from TessPy import tesslang
 
 from stemming.porter2 import stem
@@ -41,7 +41,7 @@ class pat:
 	# XML nodes to omit
 	
 	stop = [
-		re.compile(pat, re.U) for pat in [
+		re.compile(pat) for pat in [
 			r'<cit>.*?</cit>',
 			r'<bibl .+?>.*?</bibl>',
 			r'<orth .+?>.*?</orth>',
@@ -65,8 +65,8 @@ class pat:
 	# dictionary entries that are English definitions of the headword
 	
 	definition = {
-		'la': re.compile(r'<hi [^>]*rend="ital"[^>]*>(.+?)</hi>', re.U),
-		'grc': re.compile(r'<tr\b[^>]*>(.+?)</tr>', re.U)
+		'la': re.compile(r'<hi [^>]*rend="ital"[^>]*>(.+?)</hi>'),
+		'grc': re.compile(r'<tr\b[^>]*>(.+?)</tr>')
 	}
 	
 	# betacode greek tag
@@ -74,17 +74,17 @@ class pat:
 	# while neither uses <foreign> for any other language
 	# (inside definitions, anyway)
 	
-	foreign = re.compile(r'<foreign lang="greek">(.+?)</foreign>', re.U)
+	foreign = re.compile(r'<foreign lang="greek">(.+?)</foreign>')
 	
 	# stuff to remove from english entries
 	
 	clean = {
-		'any': re.compile(r'\W+', re.U),
-		'la': re.compile(r'[^a-z]', re.U),
-		'grc': re.compile(r'[\^_]', re.U)
+		'any': re.compile(r'\W+'),
+		'la': re.compile(r'[^a-z]'),
+		'grc': re.compile(r'[\^_]')
 	}
 	
-	number = re.compile(r'[0-9]', re.U)
+	number = re.compile(r'[0-9]')
 
 
 def mo_beta2uni(mo):
@@ -94,182 +94,188 @@ def mo_beta2uni(mo):
 
 
 def write_dict(defs, name, quiet):
-	'''Save a copy of the dictionary in pickle format'''
+	'''Save a copy of the dictionary in json format'''
 	
-	f = open(os.path.join(tempdir, name + '.pickle'), 'w')
+	f = open(os.path.join(tempdir, name + '.json'), 'w', encoding="utf_8")
 		
 	if not quiet:
-		print "Saving dictionary to {0}".format(f.name)
+		print("Saving dictionary to {0}".format(f.name))
 		
-	pickle.dump(defs, f)
+	json.dump(defs, f, ensure_ascii=False)
 	
 	f.close()
 
 
 def read_dict(name, quiet):
-	'''Load a copy of the dictionary in pickle format'''
+	'''Load a copy of the dictionary in json format'''
 	
-	f = open(os.path.join(tempdir, name + '.pickle'), 'r')
+	f = open(os.path.join(tempdir, name + '.json'), 'r', encoding="utf_8")
 		
 	if not quiet:
-		print "Loading dictionary from {0}".format(f.name)
+		print("Loading dictionary from {0}".format(f.name))
 		
-	defs = pickle.load(f)
+	defs = json.load(f)
 	
 	return defs
 
 
 def parse_XML_dictionaries(langs, quiet):
-	'''Create a dictionary of english translations for each lemma'''
-		
-	defs = dict()
-	
-	# process latin, greek lexica in turn
-	
-	for lang in langs:
-		filename = os.path.join(basedir, 'data', lang + '.lexicon.xml')
-		
-		if not quiet:
-			print 'Reading lexicon {0}'.format(filename)
-		
-		pr = progressbar.ProgressBar(os.stat(filename).st_size, quiet)
-		
-		try: 
-			f = codecs.open(filename, 'r', encoding='utf-8')
-		except IOError as err:
-			print "Can't read {0}: {1}".format(filename, str(err))
-			sys.exit(1)
-		
-		#
-		# Each line in the lexicon is one entry.
-		# Process one at a time to extract headword, definition.
-		#
-				
-		for line in f:
-			pr.advance(len(line.encode('utf-8')))
-			
-			# skip lines that don't conform with the expected entry structure
-						
-			m = pat.entry.search(line)
-			
-			if m is None:
-				continue
-			
-			lemma, entry = m.group(1, 2)
-			
-			# standardize the headword
-			
-			lemma = pat.clean[lang].sub('', lemma)
-			lemma = pat.number.sub('', lemma)
-			lemma = tesslang.standardize(lang, lemma)
-						
-			# remove elements on the stoplist
-			
-			for stop in pat.stop:
-				entry = stop.sub('', entry)
-						
-			# transliterate betacode to unicode chars
-			# in foreign tags
-			
-			entry = pat.foreign.sub(mo_beta2uni, entry)
-												
-			# extract strings marked as translations of the headword
-			
-			def_strings = pat.definition[lang].findall(entry)
-			
-			# drop empty defs
-			
-			def_strings = [d for d in def_strings if not d.isspace()]
-									
-			# skip lemmata for which no translation can be extracted
-			
-			if def_strings is None:
-				continue
-							
-			if lemma in defs and defs[lemma] is not None:					
-				defs[lemma].extend(def_strings)
-			else:
-				defs[lemma] = def_strings
-		
-	if not quiet:
-		print 'Read {0} entries'.format(len(defs))
-		print 'Flattening entries with multiple definitions'
-	
-	pr = progressbar.ProgressBar(len(defs), quiet)
-	
-	empty_keys = set()
-	
-	for lemma in defs:
-		pr.advance()
-		
-		if defs[lemma] is None or defs[lemma] == []:
-			empty_keys.add(lemma)
-			continue
-		
-		defs[lemma] = u'; '.join(defs[lemma])
-	
-	if not quiet:
-		print 'Lost {0} empty definitions'.format(len(empty_keys))
-
-	for k in empty_keys:
-		del defs[k]
-
-	return(defs)
+    '''Create a dictionary of english translations for each lemma'''
+    
+    defs = dict()
+    
+    # process latin, greek lexica in turn
+    
+    for lang in langs:
+        filename = os.path.join(basedir, 'data', lang + '.lexicon.xml')
+        
+        if not quiet:
+            print('Reading lexicon {0}'.format(filename))
+        
+        pr = ProgressBar(maxval = os.stat(filename).st_size)
+        
+        try: 
+            f = open(filename, "r", encoding="utf_8")
+        except IOError as err:
+            print("Can't read {0}: {1}".format(filename, str(err)))
+            sys.exit(1)
+        
+        #
+        # Each line in the lexicon is one entry.
+        # Process one at a time to extract headword, definition.
+        #
+        
+        for line in f:
+            pr.update(pr.currval + len(line.encode('utf-8')))
+            
+            # skip lines that don't conform with the expected entry structure
+            
+            m = pat.entry.search(line)
+            
+            if m is None:
+                continue
+            
+            lemma, entry = m.group(1, 2)
+            
+            # standardize the headword
+            
+            lemma = pat.clean[lang].sub('', lemma)
+            lemma = pat.number.sub('', lemma)
+            lemma = tesslang.standardize(lang, lemma)
+            
+            # remove elements on the stoplist
+            
+            for stop in pat.stop:
+                entry = stop.sub('', entry)
+            
+            # transliterate betacode to unicode chars
+            # in foreign tags
+            
+            entry = pat.foreign.sub(mo_beta2uni, entry)
+            
+            # extract strings marked as translations of the headword
+            
+            def_strings = pat.definition[lang].findall(entry)
+            
+            # drop empty defs
+            
+            def_strings = [d for d in def_strings if not d.isspace()]
+            
+            # skip lemmata for which no translation can be extracted
+            
+            if def_strings is None:
+                continue
+            
+            if lemma in defs and defs[lemma] is not None:					
+                defs[lemma].extend(def_strings)
+            else:
+                defs[lemma] = def_strings
+        
+        pr.finish()
+    
+    if not quiet:
+        print('Read {0} entries'.format(len(defs)))
+        print('Flattening entries with multiple definitions')
+    
+    pr = ProgressBar(maxval = len(defs))
+    
+    empty_keys = set()
+    
+    for lemma in defs:
+        pr.update(pr.currval + 1)
+        
+        if defs[lemma] is None or defs[lemma] == []:
+            empty_keys.add(lemma)
+            continue
+        
+        defs[lemma] = '; '.join(defs[lemma])
+    
+    pr.finish()
+    
+    if not quiet:
+        print('Lost {0} empty definitions'.format(len(empty_keys)))
+    
+    for k in empty_keys:
+        del defs[k]
+    
+    return(defs)
 
 
 def parse_stop_list(lang, name, quiet):
-	'''read frequency table'''
-	
-	# open stoplist file
-	
-	filename = None
-	
-	if name == '*':
-		filename = os.path.join(basedir, "data", lang + '.stem.freq')
-	else:
-		filename = os.path.join(basedir, name + '.freq_stop_stem')
-		
-	if not quiet:
-		print 'Reading stoplist {0}'.format(filename)
-		
-	pr = progressbar.ProgressBar(os.stat(filename).st_size, quiet)
-	
-	try:
-		f = codecs.open(filename, encoding='utf_8')
-	except IOError as err:
-		print "Can't read {0}: {1}".format(filename, str(err))
-		sys.exit(1)
-		
-	# read stoplist header to get total token count
-	
-	head = f.readline()
-	
-	m = re.compile('#\s+count:\s+(\d+)', re.U).match(head)
-	
-	if m is None:
-		print "Can't find header in {0}".format(filename)
-		sys.exit(1)
-		
-	total = int(m.group(1))
-	
-	pr.advance(len(head.encode('utf-8')))
-	
-	# read the individual token counts, divide by total
-	
-	freq = dict()
-	
-	for line in f:
-		
-		lemma, count = line.split('\t')
-		
-		lemma = tesslang.standardize(lang, lemma)
-		lemma = pat.number.sub('', lemma)
-		
-		freq[lemma] = float(count)/total
-		
-		pr.advance(len(line.encode('utf-8')))
-	
-	return(freq)
+    '''read frequency table'''
+    
+    # open stoplist file
+    
+    filename = None
+    
+    if name == '*':
+        filename = os.path.join(basedir, "data", lang + '.stem.freq')
+    else:
+        filename = os.path.join(basedir, name + '.freq_stop_stem')
+    	
+    if not quiet:
+        print('Reading stoplist {0}'.format(filename))
+    	
+    pr = ProgressBar(maxval = os.stat(filename).st_size)
+    
+    try:
+        f = open(filename, "r", encoding="utf_8")
+    except IOError as err:
+        print("Can't read {0}: {1}".format(filename, str(err)))
+        sys.exit(1)
+    
+    # read stoplist header to get total token count
+    
+    head = f.readline()
+    
+    m = re.compile('#\s+count:\s+(\d+)').match(head)
+    
+    if m is None:
+        print("Can't find header in {0}".format(filename))
+        sys.exit(1)
+    	
+    total = int(m.group(1))
+    
+    pr.update(pr.currval + len(head.encode('utf-8')))
+    
+    # read the individual token counts, divide by total
+    
+    freq = dict()
+    
+    for line in f:
+        
+        lemma, count = line.split('\t')
+        
+        lemma = tesslang.standardize(lang, lemma)
+        lemma = pat.number.sub('', lemma)
+        
+        freq[lemma] = float(count)/total
+        
+        pr.update(pr.currval + len(line.encode('utf-8')))
+        
+    pr.finish()
+    
+    return(freq)
 
 
 def bag_of_words(defs, stem_flag, quiet):
@@ -278,16 +284,16 @@ def bag_of_words(defs, stem_flag, quiet):
     # convert to bag of words, count words
     
     if not quiet:
-        print "Converting defs to bags of words"
+        print("Converting defs to bags of words")
     
     count = {}
     
-    pr = progressbar.ProgressBar(len(defs), quiet)
+    pr = ProgressBar(maxval = len(defs))
     
     empty_keys = set()
     
     for lemma in defs:
-        pr.advance()
+        pr.update(pr.currval + 1)
                 
         defs[lemma] = [tesslang.standardize('any', w) 
             for w in pat.clean['any'].split(defs[lemma]) 
@@ -305,62 +311,70 @@ def bag_of_words(defs, stem_flag, quiet):
         else:
             empty_keys.add(lemma)    
     
-    if not quiet:
-        print "Removing hapax legomena"
+    pr.finish()
     
-    pr = progressbar.ProgressBar(len(defs), quiet)
+    if not quiet:
+        print("Removing hapax legomena")
+    
+    pr = ProgressBar(maxval = len(defs))
     
     for lemma in defs:
-        pr.advance()
+        pr.update(pr.currval + 1)
         
         defs[lemma] = [w for w in defs[lemma] if count[w] > 1]
         
         if defs[lemma] == []:
             empty_keys.add(lemma)
 	
-	if not quiet:
-		print 'Lost {0} empty definitions'.format(len(empty_keys))
-		
-	for k in empty_keys:
-		del defs[k]
+    pr.finish()
+    
+    if not quiet:
+        print('Lost {0} empty definitions'.format(len(empty_keys)))
 	
-	return(defs)
+    for k in empty_keys:
+        del defs[k]
+    
+    return(defs)
 
 
 def build_corpus(defs, quiet):
-	'''Create a "corpus" of the type expected by Gensim'''
-	
-	if not quiet:
-		print 'Generating Gensim-style corpus'
-	
-	pr = progressbar.ProgressBar(len(defs), quiet)
-	
-	corpus = []
-	
-	for lemma in defs:
-		pr.advance()
-		
-		corpus.append(defs[lemma])
-	
-	return(corpus)
+    '''Create a "corpus" of the type expected by Gensim'''
+    
+    if not quiet:
+        print('Generating Gensim-style corpus')
+    
+    pr = ProgressBar(maxval = len(defs))
+    
+    corpus = []
+    
+    for lemma in defs:
+       	pr.update(pr.currval + 1)
+       	
+       	corpus.append(defs[lemma])
+    
+    pr.finish()
+    
+    return(corpus)
 
 
 def make_index(defs, quiet):
     '''Create two look-up tables: one by id and one by headword'''
     
     if not quiet:
-        print 'Creating indices'
+        print('Creating indices')
     
     by_word = {}
     by_id = []
     
-    pr = progressbar.ProgressBar(len(defs), 1)
+    pr = ProgressBar(maxval = len(defs))
     
     for lemma in defs:
-        pr.advance()
+        pr.update(pr.currval + 1)
         
         by_id.append(lemma)
         by_word[lemma] = len(by_id) - 1
+    
+    pr.finish()
     
     return (by_word, by_id)
 
@@ -414,7 +428,7 @@ def main():
         
         # limit synonym dictionary to members of stem dictionary
         
-        print 'restricting synonym dictionary to extisting stem index'
+        print('restricting synonym dictionary to extisting stem index')
         
         lost_keys = []
         
@@ -426,7 +440,7 @@ def main():
             del defs[lemma]
         
     if not opt.quiet:
-        print '{0} lemmas still have definitions'.format(len(defs))
+        print('{0} lemmas still have definitions'.format(len(defs)))
     
     # convert back into one string of defining words per lemma
     
